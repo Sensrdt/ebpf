@@ -1,66 +1,185 @@
-# eBPF Process Monitor
+# eBPF Process Tracer
 
-This program uses eBPF to monitor process creation (fork) and exit events on a Linux system. It attaches to kernel tracepoints and reports process events in real-time.
+This program uses eBPF to trace process creation (fork) and exit events in real-time. It demonstrates the use of eBPF programs attached to kernel tracepoints.
 
 ## Prerequisites
 
-The following packages need to be installed on your system:
+### Ubuntu (20.04 or later)
 
 ```bash
-# For Amazon Linux 2023
-sudo dnf install -y clang llvm kernel-devel bpftool libbpf-devel golang
+# Update package list
+sudo apt-get update
+
+# Install essential build tools
+sudo apt-get install -y \
+    clang \
+    llvm \
+    libelf-dev \
+    linux-tools-common \
+    linux-tools-generic \
+    linux-tools-$(uname -r) \
+    libbpf-dev \
+    golang
+
+# Verify installations
+clang --version
+go version
 ```
 
-## Building the Program
-
-1. First, generate the vmlinux header file:
-```bash
-sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
-```
-
-2. Install Go dependencies:
-```bash
-go mod init ebpf-example  # Only if go.mod doesn't exist
-go get github.com/cilium/ebpf
-```
-
-3. Generate eBPF code:
-```bash
-mkdir -p bpf-c
-GOPACKAGE=main bpf2go -cc clang -cflags "-O2 -g -Wall" Trace bpf-c/trace.c -- -I/usr/include/bpf -I.
-```
-
-4. Build the program:
-```bash
-go build -o trace
-```
-
-## Running the Program
-
-Since the program needs to attach to kernel tracepoints, it requires root privileges:
+### Amazon Linux 2023
 
 ```bash
-sudo ./trace
+# Update package list
+sudo dnf update -y
+
+# Install essential build tools
+sudo dnf install -y \
+    clang \
+    llvm \
+    elfutils-libelf-devel \
+    bpftool \
+    libbpf-devel \
+    golang \
+    kernel-devel
+
+# Verify installations
+clang --version
+go version
 ```
 
-The program will start monitoring process events and display them in the following format:
+## Building and Running
+
+1. **Generate vmlinux.h** (required for both distributions)
+```bash
+# Generate kernel header
+sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf-c/vmlinux.h
+
+# If the above fails, try:
+sudo bpftool btf dump file /boot/vmlinux-$(uname -r) format c > bpf-c/vmlinux.h
 ```
-[FORK] PID: <pid> PPID: <parent_pid> COMM: <command_name>
-[EXIT] PID: <pid> PPID: <parent_pid> COMM: <command_name>
+
+2. **Compile the eBPF program**
+```bash
+clang -O2 -g -Wall -target bpf -c bpf-c/trace.c -o trace_bpfel.o
 ```
 
-Press Ctrl+C to stop monitoring.
+3. **Run the program**
+```bash
+sudo go run main.go
+```
 
-## Program Structure
+## Troubleshooting
 
-- `main.go`: The main Go program that loads and manages the eBPF programs
-- `bpf-c/trace.c`: The eBPF C code that implements the tracepoint handlers
-- `trace_bpfel.o`: Generated eBPF object file
-- `trace_bpfel.go`: Generated Go code for loading the eBPF program
+### Common Issues
 
-## Requirements
+1. **Missing vmlinux.h**
+   ```
+   fatal error: 'vmlinux.h' file not found
+   ```
+   Solution: Generate vmlinux.h as shown in step 1 above.
 
-- Linux kernel 5.x or later
-- Root privileges (for attaching to tracepoints)
-- Go 1.19 or later
-- Clang/LLVM for compiling eBPF programs 
+2. **Missing bpf_helpers.h**
+   ```
+   fatal error: 'bpf/bpf_helpers.h' file not found
+   ```
+   Solution:
+   - Ubuntu: `sudo apt-get install -y libbpf-dev`
+   - Amazon Linux: `sudo dnf install -y libbpf-devel`
+
+3. **Permission Denied**
+   ```
+   Error: permission denied
+   ```
+   Solution: Run the program with sudo privileges.
+
+4. **BTF Error**
+   ```
+   Error loading BTF
+   ```
+   Solution: Make sure your kernel is built with BTF support:
+   ```bash
+   # Check if BTF is available
+   ls -l /sys/kernel/btf/vmlinux
+   ```
+
+5. **Kernel Headers Missing**
+   ```
+   Error: could not open kernel header file
+   ```
+   Solution:
+   - Ubuntu: `sudo apt-get install linux-headers-$(uname -r)`
+   - Amazon Linux: `sudo dnf install kernel-devel`
+
+### Verifying System Requirements
+
+1. **Check Kernel Version**
+```bash
+uname -r
+```
+Ensure you're running a kernel version >= 5.8 for best compatibility.
+
+2. **Check BTF Support**
+```bash
+# Should show enabled
+cat /boot/config-$(uname -r) | grep CONFIG_DEBUG_INFO_BTF
+```
+
+3. **Check BPF Subsystem**
+```bash
+# Should show enabled
+cat /boot/config-$(uname -r) | grep CONFIG_BPF
+```
+
+### Program Output
+
+When running successfully, you should see output like:
+```
+Listening for process events...
+[FORK] PID: 1234 PPID: 1 COMM: bash
+[EXIT] PID: 1234 PPID: 1 COMM: bash
+```
+
+### Debugging Tips
+
+1. **Enable Debug Output**
+```bash
+# Set environment variable before running
+sudo LIBBPF_DEBUG=1 go run main.go
+```
+
+2. **Check System Logs**
+```bash
+# View kernel messages
+sudo dmesg | tail
+
+# View system logs
+sudo journalctl -f
+```
+
+3. **Verify eBPF System Settings**
+```bash
+# Check eBPF settings
+sysctl kernel.unprivileged_bpf_disabled
+sysctl kernel.bpf_stats_enabled
+```
+
+4. **Check Available Tracepoints**
+```bash
+# List available tracepoints
+sudo ls /sys/kernel/debug/tracing/events/sched/
+```
+
+## Program Details
+
+This program uses:
+- eBPF tracepoints for process events
+- Ring buffer for event communication
+- Go with libbpf for userspace interaction
+
+The eBPF program attaches to:
+- `sched:sched_process_fork`
+- `sched:sched_process_exit`
+
+## License
+
+MIT License 

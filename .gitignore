@@ -23,4 +23,10 @@ vendor/
 go.work
 
 # vmlinux header
-vmlinux.h 
+vmlinux.h
+
+# Additional files to exclude
+go1.22.0.linux-arm64.tar.gz
+trace_bpfel.o
+*.swp
+.DS_Store 
